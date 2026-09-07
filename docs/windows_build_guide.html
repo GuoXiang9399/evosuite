@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvoSuite · Windows 用 Tauri 打包 PC 安装包（一步步）</title>
+<style>
+  :root{
+    --bg:#0d1117;--card:#161b22;--card2:#1c2330;--border:#2d3340;--text:#e6edf3;
+    --dim:#9aa6b2;--accent:#3b82f6;--accent2:#14b8a6;--ok:#22c55e;--warn:#f59e0b;--err:#ef4444;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Consolas,'Courier New',monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;line-height:1.7}
+  header{padding:28px 24px;background:linear-gradient(135deg,#13203b,#0d1117);border-bottom:1px solid var(--border)}
+  header h1{margin:0 0 6px;font-size:24px}
+  header p{margin:0;color:var(--dim);font-size:14px}
+  .wrap{max-width:960px;margin:0 auto;padding:24px}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:24px}
+  .toc h3{margin:0 0 10px;font-size:14px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  .toc a{color:var(--accent);text-decoration:none;display:block;padding:3px 0}
+  .toc a:hover{text-decoration:underline}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-bottom:22px}
+  .card h2{margin:0 0 14px;font-size:19px;display:flex;align-items:center;gap:10px}
+  .step{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 8px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-weight:700;font-size:14px}
+  .lead{color:var(--dim);font-size:14px;margin:0 0 16px}
+  ol{margin:0;padding-left:22px}
+  ol li{margin:10px 0}
+  ul{margin:8px 0;padding-left:22px}
+  code{background:#0b1220;border:1px solid var(--border);padding:2px 7px;border-radius:6px;font-family:var(--mono);font-size:13px;color:#9cc2ff}
+  .cmd{position:relative;background:#0a0f1a;border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin:10px 0;font-family:var(--mono);font-size:13.5px;color:#d6e2f0;overflow-x:auto;white-space:pre}
+  .cmd .copy{position:absolute;top:8px;right:8px;background:#1c2330;border:1px solid var(--border);color:var(--dim);border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer}
+  .cmd .copy:hover{color:var(--text);border-color:var(--accent)}
+  .note{border-left:3px solid var(--accent);background:rgba(59,130,246,.08);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:13.5px}
+  .warn{border-left-color:var(--warn);background:rgba(245,158,11,.08)}
+  .ok{border-left-color:var(--ok);background:rgba(34,197,94,.08)}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;background:#222b3a;color:var(--dim);margin-left:6px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{border:1px solid var(--border);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--card2);color:var(--dim)}
+  .kbd{display:inline-block;background:#222b3a;border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:1px 7px;font-family:var(--mono);font-size:12px}
+  .check{list-style:none;padding-left:0}
+  .check li{padding-left:26px;position:relative}
+  .check li::before{content:"✓";position:absolute;left:0;color:var(--ok);font-weight:700}
+  footer{text-align:center;color:var(--dim);font-size:12.5px;padding:24px}
+  a.link{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧬 EvoSuite · Windows 构建指引</h1>
+  <p>用 Tauri v2 把进化分析桌面应用打包成 .msi / .exe（适合 Windows 10 / 11）</p>
+</header>
+
+<div class="wrap">
+  <div class="toc">
+    <h3>目录</h3>
+    <a href="#prereq">① 准备工作与依赖清单</a>
+    <a href="#install">② 安装前置工具（一次性）</a>
+    <a href="#code">③ 把代码放到 Windows 上</a>
+    <a href="#deps">④ 安装前端依赖</a>
+    <a href="#rust">⑤ 准备 Rust 工具链</a>
+    <a href="#build">⑥ 一条命令打包（核心）</a>
+    <a href="#find">⑦ 找到安装包并安装</a>
+    <a href="#dev">⑧ 想先看效果：dev 模式</a>
+    <a href="#trouble">⑨ 常见报错与对策</a>
+  </div>
+
+  <!-- ① -->
+  <div class="card" id="prereq">
+    <h2><span class="step">1</span> 准备工作与依赖清单</h2>
+    <p class="lead">Tauri 打包的本质是：<b>前端(Vite/React) + Rust 后端</b> 用系统 WebView2 渲染。Windows 上必须装齐下面三样，否则会卡在 Rust 编译或运行时。</p>
+    <table>
+      <tr><th>依赖</th><th>作用</th><th>建议版本</th></tr>
+      <tr><td>Microsoft C++ 生成工具</td><td>Rust 编译需要 MSVC 链接器</td><td>VS 2022 生成工具 + “使用 C++ 的桌面开发”</td></tr>
+      <tr><td>Node.js</td><td>跑 Vite / 安装依赖</td><td>LTS 20 或 22（<a class="link" href="https://nodejs.org">nodejs.org</a>）</td></tr>
+      <tr><td>pnpm</td><td>本项目包管理器</td><td>任意新版本，下面用一条命令装</td></tr>
+      <tr><td>Rust 工具链</td><td>编译 Tauri 后端（src-tauri）</td><td>stable + msvc 目标</td></tr>
+      <tr><td>WebView2</td><td>Windows 10/11 已内置；老系统需手动装</td><td>见排错表</td></tr>
+    </table>
+    <div class="note ok">本项目已就绪：<code>pnpm tauri</code> 脚本、<code>tauri.conf.json</code>（productName=EvoSuite、打包 msi/nsis）、图标 <code>icons/</code> 都在 <code>src-tauri/</code> 下，无需改动即可打包。</div>
+  </div>
+
+  <!-- ② -->
+  <div class="card" id="install">
+    <h2><span class="step">2</span> 安装前置工具（一次性）</h2>
+
+    <h3 style="font-size:15px;margin:6px 0">A. 安装 Node.js 与 pnpm</h3>
+    <ol>
+      <li>到 <a class="link" href="https://nodejs.org">nodejs.org</a> 下载 <b>LTS</b> 安装包（.msi），双击安装，一路 Next。</li>
+      <li>打开 <b>PowerShell（管理员）</b> 或终端，安装 pnpm：</li>
+    </ol>
+    <div class="cmd"><button class="copy" data-copy="npm install -g pnpm">复制</button>npm install -g pnpm</div>
+    <ol start="3">
+      <li>验证（重开一个终端后）：</li>
+    </ol>
+    <div class="cmd"><button class="copy" data-copy="node -v&#10;pnpm -v">复制</button>node -v      # 期望 v20.x 或 v22.x
+pnpm -v     # 期望 9.x / 10.x</div>
+
+    <h3 style="font-size:15px;margin:18px 0 6px">B. 安装 Microsoft C++ 生成工具（关键！）</h3>
+    <ol>
+      <li>下载 <a class="link" href="https://visualstudio.microsoft.com/zh-hans/downloads/#build-tools">Visual Studio 2022 生成工具</a>（Build Tools for Visual Studio）。</li>
+      <li>运行安装器，在工作负载里<b>务必勾选 “使用 C++ 的桌面开发”</b>。</li>
+      <li>右侧“安装详细信息”中确认包含：<code>MSVC v143</code>、<code>Windows 10/11 SDK</code>、<code>C++ CMake 工具</code>。</li>
+      <li>点“安装”，约 5–10 分钟（占用约 6 GB）。</li>
+    </ol>
+    <div class="note warn"><b>这是 Windows 上最容易漏的一步。</b>没装它，Rust 编译会报 “linker `link.exe` not found”。装完<b>重启电脑</b>再继续。</div>
+
+    <h3 style="font-size:15px;margin:18px 0 6px">C. 安装 Rust</h3>
+    <ol>
+      <li>到 <a class="link" href="https://www.rust-lang.org/tools/install">rust-lang.org/tools/install</a> 下载 <code>rustup-init.exe</code> 并运行。</li>
+      <li>选择默认安装（1）即可，会自动装 <code>stable-x86_64-pc-windows-msvc</code>。</li>
+      <li>装完<b>重开终端</b>，验证：</li>
+    </ol>
+    <div class="cmd"><button class="copy" data-copy="rustc --version&#10;cargo --version">复制</button>rustc --version   # 期望 rustc 1.7x.x
+cargo --version  # 期望 cargo 1.7x.x</div>
+  </div>
+
+  <!-- ③ -->
+  <div class="card" id="code">
+    <h2><span class="step">3</span> 把代码放到 Windows 上</h2>
+    <p class="lead">你本机是 Linux 沙箱，需要把整个 <code>evosuite</code> 工程目录拷到 Windows。两种方式任选其一。</p>
+    <ul>
+      <li><b>方式一（推荐，最稳）：U 盘 / 网盘 / 内网传输</b><br>把 Linux 上的 <code>/workspace/evosuite</code> 整个文件夹复制下来，放到 Windows 的 <code>D:\Projects\evosuite</code>（建议<b>路径不要含中文和空格</b>）。</li>
+      <li><b>方式二：Git</b><br>在 Linux 端把工程提交到仓库，Windows 上 <code>git clone</code> 到本地。</li>
+    </ul>
+    <div class="note">只复制 <code>evosuite/</code> 这一层即可。<code>node_modules/</code> 和 <code>src-tauri/target/</code> <b>不用带</b>——它们会重新生成，且带着反而可能跨平台冲突。</div>
+    <p>放到 Windows 后，在终端进入该目录：</p>
+    <div class="cmd"><button class="copy" data-copy="cd D:\Projects\evosuite">复制</button>cd D:\Projects\evosuite</div>
+  </div>
+
+  <!-- ④ -->
+  <div class="card" id="deps">
+    <h2><span class="step">4</span> 安装前端依赖</h2>
+    <p class="lead">在工程根目录执行（首次会下载 React / Vite / Tauri CLI 等，约 1–2 分钟，需要联网）。</p>
+    <div class="cmd"><button class="copy" data-copy="pnpm install">复制</button>pnpm install</div>
+    <div class="note ok">看到无报错的提示符返回即成功。本项目 <code>package.json</code> 里已含 <code>"tauri": "tauri"</code> 脚本，所以下面用 <code>pnpm tauri</code> 即可调用 Tauri CLI v2。</div>
+  </div>
+
+  <!-- ⑤ -->
+  <div class="card" id="rust">
+    <h2><span class="step">5</span> 准备 Rust 工具链 <span class="badge">已含于步骤②C</span></h2>
+    <p class="lead">若你步骤②已装好 Rust，此步已自动完成，可跳过。确认 msvc 目标存在：</p>
+    <div class="cmd"><button class="copy" data-copy="rustup target list --installed">复制</button>rustup target list --installed
+# 应包含 x86_64-pc-windows-msvc</div>
+    <div class="note">Tauri 打包 Windows 安装包用到 Windows 资源编译器（rc.exe），它由步骤②B 的 “C++ 桌面开发” 工作负载提供，<b>必须装</b>。</div>
+  </div>
+
+  <!-- ⑥ -->
+  <div class="card" id="build">
+    <h2><span class="step">6</span> 一条命令打包（核心）</h2>
+    <p class="lead">在工程根目录执行：</p>
+    <div class="cmd"><button class="copy" data-copy="pnpm tauri build">复制</button>pnpm tauri build</div>
+    <p>这条命令会自动按顺序：</p>
+    <ol>
+      <li>运行 <code>pnpm build</code>（<code>tauri.conf.json</code> 里的 <code>beforeBuildCommand</code>）→ 生成 <code>dist/</code> 前端产物；</li>
+      <li>用 Cargo 编译 Rust 后端 → 约 <b>3–8 分钟</b>（首次最慢，会拉取并编译 Tauri 依赖）；</li>
+      <li>把前端 + 后端打包成安装包，输出到 <code>src-tauri/target/release/bundle/</code>。</li>
+    </ol>
+    <div class="note warn">首次编译可能要下载几百 MB 的 Rust crate，请<b>保持联网、耐心等待</b>。看到进度条或 “Compiling tauri …” 是正常现象，不是卡死。</div>
+    <div class="note ok">看到终端最后出现 <code>Finished</code> 且无红色报错，即打包成功。</div>
+  </div>
+
+  <!-- ⑦ -->
+  <div class="card" id="find">
+    <h2><span class="step">7</span> 找到安装包并安装</h2>
+    <p class="lead">打包成功后，安装包在：</p>
+    <div class="cmd"><button class="copy" data-copy="evosuite\src-tauri\target\release\bundle\msi\&#10;evosuite\src-tauri\target\release\bundle\nsis\">复制</button>evosuite\src-tauri\target\release\bundle\msi\     ← .msi 安装包（推荐）
+evosuite\src-tauri\target\release\bundle\nsis\    ← .exe 免安装版（绿色，解压即用）</div>
+    <ul>
+      <li>双击 <code>EvoSuite_0.1.0_x64_en-US.msi</code> → 按向导安装。</li>
+      <li>开始菜单会出现 <b>EvoSuite</b>，打开即进入桌面应用。</li>
+      <li>想直接拷给别人用，拿 <code>nsis</code> 里的 <code>.exe</code> 即可（无需安装）。</li>
+    </ul>
+  </div>
+
+  <!-- ⑧ -->
+  <div class="card" id="dev">
+    <h2><span class="step">8</span> 想先看效果：dev 模式</h2>
+    <p class="lead">不想等完整打包，可先以开发模式把原生窗口跑起来（同样会编译 Rust，但热更新前端）：</p>
+    <div class="cmd"><button class="copy" data-copy="pnpm tauri dev">复制</button>pnpm tauri dev</div>
+    <p>会弹出一个真实的桌面窗口（标题 “EvoSuite · 进化与流病分析”，1280×820）。改代码后窗口自动刷新。确认手感 OK 再回到步骤⑥正式打包。</p>
+    <div class="note">纯浏览器预览（只看外壳/可视化、不经 Rust）则更简单：<code>pnpm dev</code> 后浏览器打开 <code>http://localhost:5173</code>。</div>
+  </div>
+
+  <!-- ⑨ -->
+  <div class="card" id="trouble">
+    <h2><span class="step">9</span> 常见报错与对策</h2>
+    <table>
+      <tr><th>现象</th><th>原因</th><th>解决</th></tr>
+      <tr>
+        <td><code>linker `link.exe` not found</code></td>
+        <td>没装 MSVC 生成工具</td>
+        <td>装 “使用 C++ 的桌面开发” 工作负载（步骤②B），重启</td>
+      </tr>
+      <tr>
+        <td><code>rc.exe / Windows SDK 找不到</code></td>
+        <td>VS 生成工具缺 Windows SDK</td>
+        <td>在 VS Installer 里勾上 Windows 10/11 SDK 与 C++ CMake 工具</td>
+      </tr>
+      <tr>
+        <td><code>'tauri' 不是内部或外部命令</code></td>
+        <td>依赖未安装</td>
+        <td>回到根目录执行 <code>pnpm install</code></td>
+      </tr>
+      <tr>
+        <td>编译卡在 <code>Compiling tauri ...</code> 很久</td>
+        <td>首次拉取/编译 Rust 依赖</td>
+        <td>正常现象，保持联网等待；后续会快很多</td>
+      </tr>
+      <tr>
+        <td>窗口空白 / WebView 报错</td>
+        <td>缺 WebView2</td>
+        <td>到微软下载 <a class="link" href="https://developer.microsoft.com/microsoft-edge/webview2/">WebView2 运行时</a> 安装</td>
+      </tr>
+      <tr>
+        <td>路径含中文/空格导致编译失败</td>
+        <td>部分 Rust 工具链对路径敏感</td>
+        <td>把工程放到如 <code>D:\Projects\evosuite</code> 纯英文路径</td>
+      </tr>
+      <tr>
+        <td>PowerShell 禁止脚本执行</td>
+        <td>执行策略限制</td>
+        <td>管理员运行 <code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code></td>
+      </tr>
+    </table>
+    <div class="note ok">打包成功 ≠ 算法接入完成。本 MVP 的内置算法（NJ/UPGMA/K80/比对）已能离线跑通；MAFFT、IQ-TREE2 等真实引擎会在检测到本机已安装时自动调用，未安装则降级为内置实现。</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px">一句话总览</h2>
+    <p class="lead" style="margin:0">装齐 <b>VS C++ 生成工具 + Node + Rust</b> → 把 <code>evosuite</code> 拷到 Windows → <code>pnpm install</code> → <code>pnpm tauri build</code> → 去 <code>target/release/bundle/msi/</code> 拿安装包。完事。</p>
+  </div>
+</div>
+
+<footer>EvoSuite MVP · Tauri v2 构建指引 · 与桌面应用同源</footer>
+
+<script>
+// 复制按钮
+document.querySelectorAll('.cmd .copy').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const text=btn.getAttribute('data-copy').replace(/&#10;/g,'\n');
+    navigator.clipboard.writeText(text).then(()=>{
+      const old=btn.textContent;btn.textContent='已复制';
+      setTimeout(()=>btn.textContent=old,1200);
+    }).catch(()=>{btn.textContent='复制失败'});
+  });
+});
+// 平滑滚动 + 高亮
+document.querySelectorAll('.toc a').forEach(a=>{
+  a.addEventListener('click',e=>{
+    e.preventDefault();
+    const t=document.querySelector(a.getAttribute('href'));
+    if(t)t.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+});
+</script>
+</body>
+</html>
