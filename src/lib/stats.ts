@@ -1,5 +1,11 @@
-// 序列统计内核：碱基组成、转换/颠换、Ka/Ks 选择压力（Nei-Gojobori 法）
+// 序列统计内核：碱基组成、转换/颠换、多样性（π/Tajima's D/Hd/θw）、选择压力。
+// Ka/Ks 与密码子分析已迁移到 codon.ts（本文件 re-export 保持向后兼容）。
 import { SeqRecord } from './fasta'
+import { kaKs as _kaKs, KaKs } from './codon'
+
+// 向后兼容：kaKs 与 KaKs 类型从 codon.ts 再导出
+export { _kaKs as kaKs }
+export type { KaKs }
 
 const BASES = ['A', 'G', 'C', 'T'] as const
 
@@ -87,83 +93,130 @@ export function pairwiseTiTv(recs: SeqRecord[]): TiTv[] {
   return out
 }
 
-// ===== Ka/Ks（非同义/同义替换率）：Nei-Gojobori 法 =====
-// 标准遗传密码表
-const CODON: Record<string, string> = (() => {
-  const aa = 'FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG'
-  const bases = ['T', 'C', 'A', 'G']
-  const t: Record<string, string> = {}
-  let idx = 0
-  for (const b1 of bases)
-    for (const b2 of bases)
-      for (const b3 of bases) {
-        t[b1 + b2 + b3] = aa[idx++]
-      }
-  return t
-})()
+// ===== 多样性估计器：π / θw / Tajima's D / 单倍型多样性 Hd =====
+// 与 MEGA7 的 Diversity 模块对齐。
 
-function aaOf(codon: string): string {
-  return CODON[codon] ?? 'X'
+export interface Diversity {
+  n: number                 // 序列数
+  L: number                 // 有效位点数（complete 模式跳过全 gap/N 列）
+  S: number                 // 分离位点数（segregating sites）
+  eta: number               // 总突变数（所有位点差异事件总数）
+  pi: number                // 核酸多样性 π（平均成对差异/位点）
+  thetaW: number            // Watterson θw = S / a_n（每位点）
+  k: number                 // 平均成对核苷酸差异数（总，非每位点）
+  tajimaD: number           // Tajima's D
+  tajimaPval: number        // Tajima's D 双尾 P-value（近似正态）
+  tajimaD2: number          // Tajima's D 方差（Var(d)，Tajima 1989）
+  haplotypes: number        // 单倍型数（去重后的唯一序列数）
+  hd: number                // 单倍型多样性
+  hdVar: number             // Hd 方差（Nei & Tajima 1981）
 }
 
-// 单密码子内“非同义/同义”可突变位点数（遍历每个位点 3 种替代碱基）
-function synSites(codon: string): { N: number; S: number } {
-  const aa = aaOf(codon)
-  let n = 0
-  let s = 0
-  for (let pos = 0; pos < 3; pos++) {
-    for (const alt of BASES) {
-      if (alt === codon[pos]) continue
-      const mut = codon.slice(0, pos) + alt + codon.slice(pos + 1)
-      if (aaOf(mut) === aa) s++
-      else n++
+// 标准正态 CDF
+function stdNormalCdf(z: number): number {
+  const Za = Math.abs(z)
+  const t = 1 / (1 + 0.3275911 * Za)
+  const e = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-Za * Za)
+  return z >= 0 ? e : 1 - e
+}
+
+export function diversity(recs: SeqRecord[]): Diversity | null {
+  const n = recs.length
+  if (n < 2) return null
+  const seqs = recs.map((r) => r.sequence.toUpperCase().replace(/U/g, 'T'))
+  const L0 = seqs.reduce((m, s) => Math.min(m, s.length), Infinity)
+  if (L0 === 0) return null
+
+  // 列级有效 mask（跳过含 gap/N/歧义的列）
+  const validCol = new Uint8Array(L0)
+  let L = 0
+  for (let k = 0; k < L0; k++) {
+    let ok = true
+    for (let i = 0; i < n; i++) {
+      const c = seqs[i][k]
+      if (!'ACGT'.includes(c)) { ok = false; break }
     }
+    if (ok) { validCol[k] = 1; L++ }
   }
-  return { N: n, S: s }
-}
+  if (L === 0) return null
 
-export interface KaKs {
-  dN: number
-  dS: number
-  omega: number // dN/dS，>1 提示正选择
-  m: number // 非同义差异数
-  n: number // 同义差异数
-  N: number // 非同义位点数
-  S: number // 同义位点数
-  codons: number
-}
+  // 提取有效位点序列
+  const effSeqs = seqs.map((s) => {
+    let out = ''
+    for (let k = 0; k < L0; k++) if (validCol[k]) out += s[k]
+    return out
+  })
 
-// 对两条等长、为 3 倍数的核酸序列（已密码子对齐）计算 Ka/Ks
-export function kaKs(a: string, b: string): KaKs {
-  const A = a.toUpperCase().replace(/U/g, 'T')
-  const B = b.toUpperCase().replace(/U/g, 'T')
-  let m = 0
-  let n = 0
-  let N = 0
+  // S（分离位点）与 eta（总突变数）
   let S = 0
-  let codons = 0
-  for (let c = 0; c + 3 <= Math.min(A.length, B.length); c += 3) {
-    const ca = A.slice(c, c + 3)
-    const cb = B.slice(c, c + 3)
-    if (ca.length < 3 || cb.length < 3) break
-    if (/[^ACGT]/.test(ca) || /[^ACGT]/.test(cb)) continue // 含 gap/歧义则跳过该密码子
-    codons++
-    const sa = synSites(ca)
-    const sb = synSites(cb)
-    N += (sa.N + sb.N) / 2
-    S += (sa.S + sb.S) / 2
-    for (let pos = 0; pos < 3; pos++) {
-      if (ca[pos] !== cb[pos]) {
-        const mut = ca.slice(0, pos) + cb[pos] + ca.slice(pos + 1)
-        if (aaOf(mut) === aaOf(ca)) n++
-        else m++
+  let eta = 0
+  for (let k = 0; k < L; k++) {
+    const seen = new Set<string>()
+    let diff = 0
+    for (let i = 0; i < n; i++) {
+      seen.add(effSeqs[i][k])
+    }
+    if (seen.size > 1) { S++; diff = seen.size - 1 }
+    eta += diff
+  }
+
+  // π 与 k：对所有 (i,j) 对平均 p-distance
+  let sumP = 0
+  let pairs = 0
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      let diff = 0
+      for (let k = 0; k < L; k++) {
+        if (effSeqs[i][k] !== effSeqs[j][k]) diff++
       }
+      sumP += diff
+      pairs++
     }
   }
-  const pN = N ? m / N : 0
-  const pS = S ? n / S : 0
-  const dN = pN < 0.75 ? -0.75 * Math.log(1 - (4 / 3) * pN) : 3
-  const dS = pS < 0.75 ? -0.75 * Math.log(1 - (4 / 3) * pS) : 3
-  const omega = dS > 1e-9 ? dN / dS : dN > 1e-9 ? Infinity : 0
-  return { dN, dS, omega, m, n, N, S, codons }
+  const k_avg = pairs ? sumP / pairs : 0          // 平均成对差异数（总）
+  const pi = pairs ? sumP / (pairs * L) : 0        // 每位点
+
+  // Watterson θw = S / a_n（每位点）
+  let a_n = 0
+  for (let i = 1; i <= n - 1; i++) a_n += 1 / i
+  const thetaW = a_n > 0 ? S / a_n / L : 0          // 每位点
+
+  // Tajima's D（Tajima 1989）
+  //   D = (k_avg - S/a_n) / √(Var(d))
+  //   Var(d) = (e1·S + e2·S·(S-1))，e1 e2 为 Tajima 系数
+  const a1 = a_n
+  let b1 = 0
+  for (let i = 1; i <= n - 1; i++) b1 += 1 / (i * i)
+  const c1 = b1 - 1 / a1
+  const a2 = (n * (n + 1)) / (2 * (n - 1)) - 1 / a1
+  const e1 = c1 / a1
+  const e2 = a2 / (a1 * a1 + a2)
+  const dVar = e1 * S + e2 * S * (S - 1)
+  const dSd = Math.sqrt(Math.max(dVar, 0))
+  const tajimaD = dSd > 0 ? (k_avg - S / a1) / dSd : 0
+  const tajimaPval = 2 * (1 - stdNormalCdf(Math.abs(tajimaD)))
+
+  // 单倍型多样性（Nei & Tajima 1981）
+  const hapSet = new Map<string, number>()
+  for (const s of effSeqs) hapSet.set(s, (hapSet.get(s) ?? 0) + 1)
+  const h = hapSet.size
+  let sumPi2 = 0
+  for (const [, cnt] of hapSet) {
+    const fi = cnt / n
+    sumPi2 += fi * fi
+  }
+  const hd = (n / (n - 1)) * (1 - sumPi2)
+  // Hd 方差（Nei & Tajima 1981 标准近似）
+  //   Var(Hd) = [2/(n(n-1))] · [(1-Σp_i²)]² + [2/(n³)]·[2(n-1)/(n-1)·(1-Σp_i²) - 6·(1-Σp_i²)²]
+  // 简化记 P = 1 - Σp_i²（小样本稳定近似，避免负值）
+  const P = 1 - sumPi2
+  const hdVar = (2 / (n * (n - 1))) * P * P +
+    (2 / (n * n * n)) * ((2 * (n - 1) / (n - 1)) * P - 6 * P * P)
+
+  return {
+    n, L, S, eta, pi, thetaW, k: k_avg,
+    tajimaD, tajimaPval, tajimaD2: dVar,
+    haplotypes: h, hd, hdVar,
+  }
 }
+

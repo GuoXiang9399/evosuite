@@ -627,14 +627,17 @@ pub fn run_beast(
 /// 调用外部 BEAST1 进行系统动态(phylodynamics)推断。
 /// 复用贝叶斯天际线 MCMC，解析 TMRCA 与 Ne 曲线，派生增长率 / R0 / 合并率。
 /// 未安装 beast 或解析失败时返回 Err，由前端回退到内置近似。
+/// 注：Tauri v2 自动做 snake_case ↔ camelCase 参数转换（gen_time ↔ genTime），
+///     参数级 #[serde(rename)] 不再被 command 宏支持。
 #[tauri::command]
 pub fn run_beast_phylodynamics(
     fasta: String,
-    #[serde(rename = "model")] _model: String,
+    model: String,
     groups: i64,
-    #[serde(rename = "genTime")] gen_time: f64,
+    gen_time: f64,
     engine: String,
 ) -> Result<BeastPhylodynamicsResult, String> {
+    let _ = model; // 命令签名兼容（前端传入，此处不参与计算）
     let seqs = parse_fasta(&fasta);
     if seqs.len() < 2 {
         return Err("序列不足，无法进行系统动态推断".into());

@@ -228,9 +228,10 @@ export default function SequenceEditor() {
       )}
 
       <div className="seq-grid-scroll">
-        {/* 位点标尺行 */}
+        {/* 列头行：# | Name | 位点标尺 | Len | GC% —— 信息列与碱基列分离 */}
         <div className="seq-grid-row ruler">
-          <div className="seq-info-cell ruler-corner">{t('seqEditor.site')}</div>
+          <div className="seq-idx-cell">#</div>
+          <div className="seq-info-cell">{t('seqEditor.colName')}</div>
           <div className="seq-bases-row">
             {Array.from({ length: maxLen }).map((_, p) => (
               <span key={p} className="ruler-cell">
@@ -238,15 +239,17 @@ export default function SequenceEditor() {
               </span>
             ))}
           </div>
-          <div className="seq-stat-cell ruler-corner">{t('seqEditor.stat')}</div>
+          <div className="seq-len-cell">{t('seqEditor.colLen')}</div>
+          <div className="seq-gc-cell">{t('seqEditor.colGc')}</div>
         </div>
 
-        {/* 每条序列一行：左信息 | 碱基 | 右统计（三者等高） */}
+        {/* 每条序列一行：行号 | 名称 | 碱基 | 长度 | GC%（五行等高，desc 见悬停提示） */}
         {sequences.map((s, i) => {
           const st = seqStats(s)
           return (
             <div className="seq-grid-row" key={s.id ?? i}>
-              <div className="seq-info-cell" title={s.desc || s.name}>
+              <div className="seq-idx-cell">{i + 1}</div>
+              <div className="seq-info-cell" title={s.desc ? `${s.name} — ${s.desc}` : s.name}>
                 <div className="seq-info-line">
                   <span className="seq-info-name">{s.name}</span>
                   <button
@@ -260,7 +263,6 @@ export default function SequenceEditor() {
                     🗑
                   </button>
                 </div>
-                {s.desc && <div className="seq-info-desc">{s.desc}</div>}
               </div>
 
               <div className="seq-bases-row" onMouseMove={onRowMouseMove(i)} onMouseUp={onRowMouseUp(i)}>
@@ -298,17 +300,11 @@ export default function SequenceEditor() {
                 })}
               </div>
 
-              <div
-                className="seq-stat-cell"
-                title={`${s.name}: ${st.length} bp, GC ${(st.gcContent * 100).toFixed(1)}%`}
-              >
-                <span>
-                  {t('seqEditor.len')} {st.length}
-                </span>
-                <span className="seq-stat-dot">·</span>
-                <span>
-                  {t('seqEditor.gc')} {(st.gcContent * 100).toFixed(0)}%
-                </span>
+              <div className="seq-len-cell" title={`${s.name}: ${st.length} bp`}>
+                {st.length}
+              </div>
+              <div className="seq-gc-cell" title={`GC ${(st.gcContent * 100).toFixed(1)}%`}>
+                {(st.gcContent * 100).toFixed(0)}%
               </div>
             </div>
           )

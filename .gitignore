@@ -1,0 +1,23 @@
+# 依赖与构建产物
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# 单文件预览产物（根目录）
+EvoSuite_standalone.html
+
+# 日志与临时文件
+*.log
+.DS_Store
+Thumbs.db
+*.local
+.cache/
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+
+# Rust
+**/*.rs.bk

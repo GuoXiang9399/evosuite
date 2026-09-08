@@ -7,7 +7,6 @@ import { toFasta } from '../lib/fasta'
 import { tryMLBuild } from '../lib/tauri'
 import { leafCount, internalNodes, parseNewickSafe, TreeNode } from '../lib/newick'
 import { computeSkyline, tryBeast, computePhylodynamics, tryBeastPhylodynamics } from '../lib/beast'
-import TreeView from './TreeView'
 
 // 内置引擎：核酸 10 种 + 氨基酸 7 种（随序列类型自动切换）
 const NUC_MODEL_KEYS: SubstModel[] = ['pdist', 'jc69', 'k80', 'f84', 'hky', 'gtr', 'tn93', 't92', 'logdet', 'mcl']
@@ -526,14 +525,9 @@ export default function Build() {
               </div>
               <pre className="newick">{newick}</pre>
               <div className="view-actions">
-                <button className="btn primary" onClick={() => setView('report')}>{t('build.genReport')}</button>
+                <button className="btn primary" onClick={() => setView('tree')}>{t('build.viewTree')}</button>
+                <button className="btn" onClick={() => setView('report')}>{t('build.genReport')}</button>
               </div>
-            </div>
-          )}
-
-          {tree && (
-            <div className="tree-embed">
-              <TreeView embedded />
             </div>
           )}
         </div>
