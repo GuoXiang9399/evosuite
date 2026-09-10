@@ -8,6 +8,41 @@ export interface SkylineParams {
   chain: number
 }
 
+/* ------------------------------------------------------------------ *
+ *  BEAST1/2 BEAUti 分类参数（v0.1.1）
+ *  与 Rust 端 BeastRunParams 一一对应：
+ *    treePrior  树先验   : yule | bd | constant | exponential | skyline
+ *    clock      分子钟   : strict | relaxed_ln | relaxed_exp
+ *    subst      位点替换 : hky | gtr | jc（氨基酸数据由 Rust 端自动改用 JTT）
+ *    gammaCats  离散 Gamma 类别数（0 = 不建模）
+ *    pinv       不变位点比例（pinvEnabled=false 时 Rust 端视为关闭）
+ *    chain      MCMC 链长
+ * ------------------------------------------------------------------ */
+export interface Beast1Params {
+  treePrior: 'yule' | 'bd' | 'constant' | 'exponential' | 'skyline'
+  clock: 'strict' | 'relaxed_ln' | 'relaxed_exp'
+  subst: 'hky' | 'gtr' | 'jc'
+  gammaCats: 0 | 2 | 4 | 8
+  pinvEnabled: boolean
+  pinv: number
+  chain: number
+}
+
+// 组装 invoke('run_beast'…) 的 params 对象（字段名与 Rust serde rename 对齐）。
+export function toBeastRunParams(b1: Beast1Params, groups: number, genTime: number, engine: string) {
+  return {
+    treePrior: b1.treePrior,
+    clock: b1.clock,
+    subst: b1.subst,
+    gammaCats: b1.gammaCats,
+    pinv: b1.pinvEnabled ? b1.pinv : -1,
+    groups,
+    chain: b1.chain,
+    genTime,
+    engine,
+  }
+}
+
 export interface SkylineResult {
   model: string
   groups: number
@@ -65,10 +100,12 @@ export function computeSkyline(recs: SeqRecord[], params: SkylineParams): Skylin
 }
 
 // 调用外部 BEAST1（Rust 命令），返回天际线结果；不可用返回 null（前端回退内置）。
+// v0.1.1：beast1Params（BEAUti 分类参数）透传给 Rust，生成完整 BEAST XML。
 export async function tryBeast(
   fastaText: string,
   params: SkylineParams,
   engine: string = 'beast1',
+  beast1?: Beast1Params,
 ): Promise<SkylineResult | null> {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -77,8 +114,11 @@ export async function tryBeast(
       fasta: fastaText,
       model: params.model,
       groups: params.groups,
-      chain: params.chain,
+      chain: beast1 ? beast1.chain : params.chain,
       engine,
+      params: beast1
+        ? toBeastRunParams(beast1, params.groups, 1, engine)
+        : null,
     })
     if (out && Array.isArray(out.times) && Array.isArray(out.ne)) {
       return {
@@ -194,10 +234,12 @@ export function computePhylodynamics(
 }
 
 // 调用外部 BEAST1 进行系统动态分析；不可用时返回 null（前端回退内置）。
+// v0.1.1：beast1Params（BEAUti 分类参数）透传给 Rust。
 export async function tryBeastPhylodynamics(
   fastaText: string,
   params: PhylodynamicsParams,
   engine: string = 'beast1',
+  beast1?: Beast1Params,
 ): Promise<PhylodynamicsResult | null> {
   try {
     const { invoke } = await import('@tauri-apps/api/core')
@@ -208,6 +250,9 @@ export async function tryBeastPhylodynamics(
       groups: params.groups,
       genTime: params.genTime,
       engine,
+      params: beast1
+        ? toBeastRunParams(beast1, params.groups, params.genTime, engine)
+        : null,
     })
     if (out && typeof out.tmrca === 'number') {
       return {

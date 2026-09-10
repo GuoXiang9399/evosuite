@@ -76,7 +76,7 @@ export default function App() {
       <div className="topwrap">
         <header className="topbar">
           <div className="brand">
-            <BrandLockup markSize={30} wordSize={20} />
+            <BrandLockup markSize={60} wordSize={40} />
             <span className="brand-sub">{t('app.tagline')}</span>
           </div>
 

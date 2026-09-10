@@ -1,7 +1,7 @@
 {
   "name": "evosuite",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "EvoSuite - 进化分析一体化桌面平台（MEGA 替代 MVP）",
   "scripts": {

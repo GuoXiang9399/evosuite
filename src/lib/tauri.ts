@@ -18,14 +18,13 @@ async function invokeSafe(cmd: string, args?: Record<string, any>): Promise<any>
 
 // ---------- 工作区（workspace）----------
 
-// 默认工作区 = 软件自身文件夹内的 workspace 子目录。
-// Tauri 下用 appConfigDir(/app data) 拼接；浏览器下用相对占位符。
+// 默认工作区 = 软件自身文件夹内的 workspace 子目录（Rust default_workspace 命令）。
+// 浏览器预览下返回相对占位符。
 export async function getDefaultWorkspace(): Promise<string> {
   if (inTauri()) {
     try {
-      const path = await import('@tauri-apps/api/path')
-      const dir = await path.appConfigDir()
-      return await path.join(dir, 'workspace')
+      const dir: string = await invokeSafe('default_workspace')
+      if (typeof dir === 'string' && dir) return dir
     } catch {
       /* 回退 */
     }
@@ -190,6 +189,78 @@ export async function detectEngines(): Promise<Record<string, EngineStatus>> {
 // 打开官方下载页（浏览器与桌面 webview 均可用）。
 export function openDownloadPage(url: string) {
   window.open(url, '_blank', 'noopener')
+}
+
+// 引擎一键安装结果（Rust install_engine 返回）。
+export interface EngineInstallResult {
+  path: string
+  version: string
+  warning: string
+}
+
+// 一键下载并安装引擎到「软件文件夹/engines/<id>」。
+// 返回 null 表示当前平台不支持一键安装（调用方回退到打开下载页）。
+export async function installEngine(id: string): Promise<EngineInstallResult | null> {
+  if (!inTauri()) return null
+  try {
+    const res: EngineInstallResult = await invokeSafe('install_engine', { id })
+    if (res && typeof res.path === 'string') return res
+  } catch (e) {
+    // 平台无官方一键安装包等：向上抛出，由调用方决定回退策略
+    throw e instanceof Error ? e : new Error(String(e))
+  }
+  return null
+}
+
+// ---------- 工作区结果文件 ----------
+
+export interface WorkspaceFile {
+  name: string
+  size: number
+  modified: string
+}
+
+// 列出工作区（结果文件夹）中的文件；Tauri 不可用时返回空列表。
+export async function listWorkspaceFiles(workspace?: string): Promise<WorkspaceFile[]> {
+  if (!inTauri()) return []
+  try {
+    const res: WorkspaceFile[] = await invokeSafe('list_workspace_files', {
+      workspace: workspace || null,
+    })
+    if (Array.isArray(res)) return res
+  } catch {
+    /* 浏览器 / 错误：空列表 */
+  }
+  return []
+}
+
+// 把结果文件写入工作区（Tauri 下保存到磁盘；浏览器下静默跳过）。
+export async function saveWorkspaceFile(filename: string, content: string, workspace?: string): Promise<string | null> {
+  if (!inTauri()) return null
+  try {
+    const p: string = await invokeSafe('save_workspace_file', {
+      workspace: workspace || null,
+      filename,
+      content,
+    })
+    return typeof p === 'string' ? p : null
+  } catch {
+    return null
+  }
+}
+
+// 读取工作区结果文件内容（浏览器下不可用，返回 null）。
+export async function readWorkspaceFile(filename: string, workspace?: string): Promise<string | null> {
+  if (!inTauri()) return null
+  try {
+    const text: string = await invokeSafe('read_workspace_file', {
+      workspace: workspace || null,
+      filename,
+    })
+    return typeof text === 'string' ? text : null
+  } catch {
+    return null
+  }
 }
 
 // 在桌面端通过 Rust 触发下载/安装辅助；当前返回官方下载链接由前端打开。

@@ -4,7 +4,7 @@ import { SubstModel, isAA, detectSeqType } from '../lib/distance'
 import { computeDistance, buildTree } from '../lib/analysis'
 import { buildTreeWithBootstrap } from '../lib/bootstrap'
 import { toFasta } from '../lib/fasta'
-import { tryMLBuild } from '../lib/tauri'
+import { tryMLBuild, saveWorkspaceFile } from '../lib/tauri'
 import { leafCount, internalNodes, parseNewickSafe, TreeNode } from '../lib/newick'
 import { computeSkyline, tryBeast, computePhylodynamics, tryBeastPhylodynamics } from '../lib/beast'
 
@@ -64,6 +64,7 @@ export default function Build() {
   const tree = useStore((s) => s.tree)
   const newick = useStore((s) => s.newick)
   const setView = useStore((s) => s.setView)
+  const workspace = useStore((s) => s.workspace)
   const pushLog = useStore((s) => s.pushLog)
   const lang = useStore((s) => s.lang)
   const bootstrapReps = useStore((s) => s.bootstrapReps)
@@ -212,6 +213,9 @@ export default function Build() {
     }
 
     setTree(tree, newick)
+    // 保存结果树到工作文件夹（软件目录/workspace/tree.nwk）
+    const savedNwk = await saveWorkspaceFile('tree.nwk', newick + '\n', workspace)
+    if (savedNwk) pushLog(t('log.saveFile', { name: 'tree.nwk' }), 'ok')
     const sup = internalNodes(tree).filter((n) => n.bootstrap != null).length
     const supStr = reps > 0 && engine === 'builtin' ? t('log.buildReps', { n: sup }) : ''
     pushLog(t('log.buildDone', { leaves: leafCount(tree), internal: internalNodes(tree).length, sup: supStr }), 'ok')
@@ -396,18 +400,14 @@ export default function Build() {
                 </select>
               </div>
               {isBayes ? (
-                <>
+                isBeast ? (
+                  /* BEAST1/2：BEAUti 分类参数卡片（树先验/位点模型/分子钟/MCMC） */
+                  <BeastInline engine={engine} />
+                ) : (
                   <div className="cfg-block">
                     <p className="cfg-note">{t('build.bayesNote')}</p>
                   </div>
-                  {isBeast && (
-                    <div className="cfg-block">
-                      <h3>{t('build.beastPanel')}</h3>
-                      <p className="cfg-note">{t('build.beastPanelSub')}</p>
-                      <BeastInline engine={engine} />
-                    </div>
-                  )}
-                </>
+                )
               ) : engine === 'iqtree2' ? (
                 <>
                   <div className="cfg-block">
@@ -536,7 +536,17 @@ export default function Build() {
   )
 }
 
-// 内联 Beast 引擎的天际线 / 系统动态参数面板（先前在 AdvancedAnalysis 中）
+// BEAST 引擎的 BEAUti 分类参数面板（v0.1.1）。
+// 参照 BEAUti 1.10.4 的参数分组逻辑设计四张卡片：
+//   ① Tree Prior（树先验）   ② Site Model（位点模型）
+//   ③ Clock Model（分子钟）  ④ MCMC（链长）
+// 参数经 Rust 端生成真实 BEAST XML 并运行；结果自动保存到工作文件夹。
+const TREE_PRIORS = ['skyline', 'constant', 'exponential', 'yule', 'bd'] as const
+const SUBSTS = ['hky', 'gtr', 'jc'] as const
+const CLOCKS = ['strict', 'relaxed_ln', 'relaxed_exp'] as const
+const BEAST_GAMMAS = [0, 2, 4, 8] as const
+const CHAIN_SETS = [1000000, 10000000, 50000000, 100000000]
+
 function BeastInline({ engine }: { engine: EngineId }) {
   const t = useT()
   const sequences = useStore((s) => s.sequences)
@@ -547,18 +557,37 @@ function BeastInline({ engine }: { engine: EngineId }) {
   const setPhyloParams = useStore((s) => s.setPhyloParams)
   const setPhylodynamics = useStore((s) => s.setPhylodynamics)
   const pushLog = useStore((s) => s.pushLog)
+  const workspace = useStore((s) => s.workspace)
+  const b1 = useStore((s) => s.beast1Params)
+  const setB1 = useStore((s) => s.setBeast1Params)
   const [tab, setTab] = useState<'skyline' | 'phylo'>('skyline')
   const [busy, setBusy] = useState(false)
-  const MODELS = ['constant', 'exponential', 'skyline'] as const
   const pill = (on: boolean) => `tab-btn ${on ? 'active' : ''}`
+  // 氨基酸数据：BEAST1 自动改用 JTT 经验模型（Rust 端处理），UI 显示说明
+  const isAAData = detectSeqType(sequences.map((s) => s.sequence)) === 'aa'
+  // skyline 分组数（仅 Bayesian Skyline 先验有意义；随运行目标分别绑定）
+  const groups = tab === 'skyline' ? params.groups : phyloParams.groups
+  const setGroups = (n: number) =>
+    tab === 'skyline'
+      ? setParams({ ...params, groups: n })
+      : setPhyloParams({ ...phyloParams, groups: n })
 
   const runSkyline = async () => {
     if (!sequences.length) return
     setBusy(true)
     const fasta = toFasta(sequences)
-    let res = await tryBeast(fasta, params, engine)
+    let res = await tryBeast(fasta, params, engine, b1)
     if (!res) res = computeSkyline(sequences, params)
     setSkyline(res)
+    // 结果落盘：skyline.tsv（时间 / Ne）
+    if (res.times.length) {
+      const tsv =
+        'time\tNe\n' +
+        res.times.map((x, i) => `${x}\t${res!.ne[i]}`).join('\n') +
+        '\n'
+      const p = await saveWorkspaceFile('skyline.tsv', tsv, workspace)
+      if (p) pushLog(t('log.saveFile', { name: 'skyline.tsv' }), 'ok')
+    }
     pushLog(`${t('adv.result')} (${engine})`, 'ok')
     setBusy(false)
   }
@@ -566,9 +595,18 @@ function BeastInline({ engine }: { engine: EngineId }) {
     if (!sequences.length) return
     setBusy(true)
     const fasta = toFasta(sequences)
-    let res = await tryBeastPhylodynamics(fasta, phyloParams, engine)
+    let res = await tryBeastPhylodynamics(fasta, phyloParams, engine, b1)
     if (!res) res = computePhylodynamics(sequences, phyloParams)
     setPhylodynamics(res)
+    // 结果落盘：phylodynamics.tsv（时间 / 合并率）
+    if (res.times.length) {
+      const tsv =
+        'time\tcoalescentRate\n' +
+        res.times.map((x, i) => `${x}\t${res.coalescentRate[i]}`).join('\n') +
+        '\n'
+      const p = await saveWorkspaceFile('phylodynamics.tsv', tsv, workspace)
+      if (p) pushLog(t('log.saveFile', { name: 'phylodynamics.tsv' }), 'ok')
+    }
     pushLog(`${t('adv.phyloResult')} (${engine})`, 'ok')
     setBusy(false)
   }
@@ -579,75 +617,140 @@ function BeastInline({ engine }: { engine: EngineId }) {
 
   return (
     <>
+      {/* 运行目标：天际线图 / 系统动态 */}
       <div className="analyze-tabs">
         <button className={pill(tab === 'skyline')} onClick={() => setTab('skyline')}>{t('adv.tabSkyline')}</button>
         <button className={pill(tab === 'phylo')} onClick={() => setTab('phylo')}>{t('adv.tabPhylo')}</button>
       </div>
-      {tab === 'skyline' && (
-        <div className="adv-inline">
-          <label className="adv-field-label">{t('adv.model')}</label>
+
+      {/* ① Tree Prior —— BEAUti「Priors → Tree » 分组 */}
+      <div className="cfg-block">
+        <h3>① {t('build.beastTreePrior')}</h3>
+        <p className="cfg-note">{t('build.beastTreePriorSub')}</p>
+        <div className="build-pill-row">
+          {TREE_PRIORS.map((k) => (
+            <button key={k} className={pill(b1.treePrior === k)} onClick={() => setB1({ treePrior: k })}>
+              {t('build.tp.' + k)}
+            </button>
+          ))}
+        </div>
+        {b1.treePrior === 'skyline' && (
+          <div className="adv-inline" style={{ marginTop: 10 }}>
+            <label className="adv-field-label">{t('adv.groups')}</label>
+            <input
+              className="sel-input adv-num"
+              type="number"
+              min={2}
+              max={20}
+              value={groups}
+              onChange={(e) => setGroups(Math.max(2, Math.min(20, Number(e.target.value) || 2)))}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ② Site Model —— BEAUti「Site Model » 分组 */}
+      <div className="cfg-block">
+        <h3>② {t('build.beastSiteModel')}</h3>
+        <p className="cfg-note">{t('build.beastSiteModelSub')}</p>
+        {isAAData ? (
+          <p className="cfg-note">
+            <b>{t('build.subst.jtt')}</b> — {t('build.subst.jttNote')}
+          </p>
+        ) : (
           <div className="build-pill-row">
-            {MODELS.map((m) => (
-              <button key={m} className={pill(params.model === m)} onClick={() => setParams({ ...params, model: m })}>
-                {t('adv.m.' + m)}
+            {SUBSTS.map((k) => (
+              <button key={k} className={pill(b1.subst === k)} onClick={() => setB1({ subst: k })}>
+                {t('build.subst.' + k)}
               </button>
             ))}
           </div>
-          <label className="adv-field-label">{t('adv.groups')}</label>
-          <input
-            className="sel-input adv-num"
-            type="number"
-            min={2}
-            max={20}
-            value={params.groups}
-            onChange={(e) => setParams({ ...params, groups: Math.max(2, Math.min(20, Number(e.target.value) || 2)) })}
-          />
-          <label className="adv-field-label">{t('adv.chain')}</label>
-          <select className="sel-input" value={params.chain} onChange={(e) => setParams({ ...params, chain: Number(e.target.value) })}>
-            <option value={1000000}>1,000,000</option>
-            <option value={10000000}>10,000,000</option>
-            <option value={50000000}>50,000,000</option>
-            <option value={100000000}>100,000,000</option>
+        )}
+        <div className="adv-inline" style={{ marginTop: 10 }}>
+          <label className="adv-field-label">{t('build.beastGamma')}</label>
+          <div className="build-pill-row">
+            {BEAST_GAMMAS.map((k) => (
+              <button key={k} className={pill(b1.gammaCats === k)} onClick={() => setB1({ gammaCats: k })}>
+                {k === 0 ? t('build.gammaOff') : String(k)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="adv-inline" style={{ marginTop: 10 }}>
+          <label className="adv-check">
+            <input
+              type="checkbox"
+              checked={b1.pinvEnabled}
+              onChange={(e) => setB1({ pinvEnabled: e.target.checked })}
+            />
+            {t('build.invSites')}
+          </label>
+          {b1.pinvEnabled && (
+            <input
+              className="sel-input adv-num"
+              type="number"
+              min={0}
+              max={0.9}
+              step={0.01}
+              value={b1.pinv}
+              onChange={(e) => setB1({ pinv: Math.max(0, Math.min(0.9, Number(e.target.value) || 0.1)) })}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* ③ Clock Model —— BEAUti「Clock Model » 分组 */}
+      <div className="cfg-block">
+        <h3>③ {t('build.beastClock')}</h3>
+        <p className="cfg-note">{t('build.beastClockSub')}</p>
+        <div className="build-pill-row">
+          {CLOCKS.map((k) => (
+            <button key={k} className={pill(b1.clock === k)} onClick={() => setB1({ clock: k })}>
+              {t('build.clock.' + k)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ④ MCMC —— BEAUti「MCMC » 分组 */}
+      <div className="cfg-block">
+        <h3>④ {t('build.beastMcmc')}</h3>
+        <p className="cfg-note">{t('build.beastMcmcSub')}</p>
+        <div className="adv-inline">
+          <label className="adv-field-label">{t('build.chainLength')}</label>
+          <select
+            className="sel-input"
+            value={b1.chain}
+            onChange={(e) => setB1({ chain: Number(e.target.value) })}
+          >
+            {CHAIN_SETS.map((c) => (
+              <option key={c} value={c}>{c.toLocaleString('en-US')}</option>
+            ))}
           </select>
-          <button className="btn primary adv-run" onClick={runSkyline} disabled={busy}>
-            {busy ? t('adv.busy') : `▶ ${t('adv.run')}`}
-          </button>
         </div>
-      )}
-      {tab === 'phylo' && (
-        <div className="adv-inline">
-          <label className="adv-field-label">{t('adv.model')}</label>
-          <div className="build-pill-row">
-            {MODELS.map((m) => (
-              <button key={m} className={pill(phyloParams.model === m)} onClick={() => setPhyloParams({ ...phyloParams, model: m })}>
-                {t('adv.m.' + m)}
-              </button>
-            ))}
+        {tab === 'phylo' && (
+          <div className="adv-inline" style={{ marginTop: 10 }}>
+            <label className="adv-field-label">{t('adv.genTime')}</label>
+            <input
+              className="sel-input adv-num"
+              type="number"
+              min={0.1}
+              max={50}
+              step={0.1}
+              value={phyloParams.genTime}
+              onChange={(e) => setPhyloParams({ ...phyloParams, genTime: Math.max(0.1, Number(e.target.value) || 1) })}
+            />
           </div>
-          <label className="adv-field-label">{t('adv.groups')}</label>
-          <input
-            className="sel-input adv-num"
-            type="number"
-            min={2}
-            max={20}
-            value={phyloParams.groups}
-            onChange={(e) => setPhyloParams({ ...phyloParams, groups: Math.max(2, Math.min(20, Number(e.target.value) || 2)) })}
-          />
-          <label className="adv-field-label">{t('adv.genTime')}</label>
-          <input
-            className="sel-input adv-num"
-            type="number"
-            min={0.1}
-            max={50}
-            step={0.1}
-            value={phyloParams.genTime}
-            onChange={(e) => setPhyloParams({ ...phyloParams, genTime: Math.max(0.1, Number(e.target.value) || 1) })}
-          />
-          <button className="btn primary adv-run" onClick={runPhylo} disabled={busy}>
-            {busy ? t('adv.busy') : `▶ ${t('adv.runPhylo')}`}
-          </button>
-        </div>
-      )}
+        )}
+        <button
+          className="btn primary adv-run"
+          style={{ marginTop: 12 }}
+          onClick={tab === 'skyline' ? runSkyline : runPhylo}
+          disabled={busy}
+        >
+          {busy ? t('adv.busy') : `▶ ${tab === 'skyline' ? t('adv.run') : t('adv.runPhylo')}`}
+        </button>
+      </div>
     </>
   )
 }

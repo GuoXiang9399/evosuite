@@ -108,9 +108,9 @@ export default function Analyze({ full = false }: { full?: boolean }) {
       <h4>{t('seq.composition')}</h4>
       {/* 左表右图并排：行高由 .compo-side 统一控制为 21px，让表行 / 图行严格对齐 */}
       <div className="compo-split">
-        {/* 左侧：堆叠柱状图（每条序列一行，与表格行一一对应） */}
+        {/* 左侧：堆叠柱状图（每条序列一行 + Mean 行，与表格行一一对应） */}
         <div className="compo-side compo-chart">
-          <CompoStack compo={compo} />
+          <CompoStack compo={compo} t={t} />
         </div>
         {/* 右侧：# | Name | A | G | C | T | Len | GC%（精确计数） */}
         <div className="compo-side">
@@ -533,7 +533,7 @@ function CodonPanel() {
       {usage && top.length > 0 ? (
         <div className="codon-split">
           <div className="codon-split-side">
-            <table className="dist-mini">
+            <table className="dist-mini codon-table">
               <thead>
                 <tr>
                   <th>{t('analyze.codon.colCodon')}</th>
@@ -557,7 +557,7 @@ function CodonPanel() {
             </table>
           </div>
           <div className="codon-split-side codon-chart-side">
-            <RscuChart usage={usage} top={top} t={t} />
+            <RscuChart usage={usage} top={top} />
           </div>
         </div>
       ) : (
@@ -653,63 +653,60 @@ function aaShort(codon: string): string {
 
 // ---------------------------------------------------------------------------
 // RSCU 偏好条形图（水平条；RSCU>1 偏好=绿，<1 回避=蓝灰；参考线 RSCU=1）
+// v0.1.1：与左侧表格逐行严格对齐 —— rowH/thead 高度均 21px，无标题偏移。
 // ---------------------------------------------------------------------------
 
-function RscuChart({ usage, top, t }: {
+function RscuChart({ usage, top }: {
   usage: ReturnType<typeof codonUsage>
   top: [string, number][]
-  t: (k: string) => string
 }) {
   const W = 520
   const labelW = 52
   const valW = 44
-  // 与左侧 dist-mini 表格行高保持一致（padding 2+2 + 文字行高 ≈ 21px）
+  // 行高与 .codon-table 行高严格一致（height 21px，box-sizing border-box）
   const rowH = 21
-  const padT = 22
-  const H = padT + top.length * rowH + 26
+  const padT = 21 // 对齐表格 thead 行高
+  const H = padT + top.length * rowH + 24
   const plotW = W - labelW - valW - 8
   const maxR = Math.max(1.5, ...top.map(([c]) => usage.rscu[c] || 0))
   const xOf = (v: number) => labelW + (v / maxR) * plotW
   return (
-    <div style={{ marginTop: 12 }}>
-      <div style={{ fontWeight: 600, fontSize: 12.5, marginBottom: 4 }}>{t('analyze.codon.chartRscu')}</div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W, display: 'block' }} role="img">
-        {/* 参考线 RSCU=1 */}
-        <line x1={xOf(1)} y1={padT - 4} x2={xOf(1)} y2={padT + top.length * rowH + 2}
-          stroke="#ffd479" strokeWidth={1} strokeDasharray="3 3" />
-        <text x={xOf(1)} y={padT - 8} fontSize={9} fill="#ffd479" textAnchor="middle">{t('analyze.codon.rscuRef')}</text>
-        {/* x 轴刻度 */}
-        {[0, 0.5, 1, 1.5, 2, 3, 4].filter((v) => v <= maxR).map((v) => (
-          <g key={v}>
-            <line x1={xOf(v)} y1={padT + top.length * rowH + 2} x2={xOf(v)} y2={padT + top.length * rowH + 5} stroke="#5a6170" strokeWidth={0.8} />
-            <text x={xOf(v)} y={padT + top.length * rowH + 15} fontSize={8.5} fill="#8a93a6" textAnchor="middle">{v}</text>
-          </g>
-        ))}
-        {top.map(([codon, cnt], i) => {
-          const rscu = usage.rscu[codon] || 0
-          const y = padT + i * rowH
-          const prefer = rscu >= 1
-          const bw = Math.max(1, xOf(rscu) - labelW)
-          return (
-            <g key={codon}>
-              <text x={labelW - 6} y={y + rowH / 2 + 2.5} fontSize={9} fill="var(--text-dim, #aeb6c4)"
-                textAnchor="end" fontFamily="var(--mono, monospace)">{codon}</text>
-              <rect x={labelW} y={y + 2} width={bw} height={rowH - 4} rx={1.5}
-                fill={prefer ? '#4caf82' : '#5b9bd5'} opacity={0.85} />
-              <text x={labelW + bw + 5} y={y + rowH / 2 + 2.5} fontSize={8.5} fill="#8a93a6"
-                fontFamily="var(--mono, monospace)">{rscu.toFixed(2)}</text>
-            </g>
-          )
-        })}
-        {/* 图例 */}
-        <g transform={`translate(${labelW}, ${H - 6})`}>
-          <rect x={0} y={-7} width={9} height={9} rx={1.5} fill="#4caf82" opacity={0.85} />
-          <text x={13} y={0.5} fontSize={8.5} fill="#8a93a6">RSCU ≥ 1 (preferred)</text>
-          <rect x={120} y={-7} width={9} height={9} rx={1.5} fill="#5b9bd5" opacity={0.85} />
-          <text x={133} y={0.5} fontSize={8.5} fill="#8a93a6">RSCU &lt; 1 (avoided)</text>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W, display: 'block' }} role="img">
+      {/* 参考线 RSCU=1（标签画在表头高度区内） */}
+      <line x1={xOf(1)} y1={padT - 2} x2={xOf(1)} y2={padT + top.length * rowH + 1}
+        stroke="#ffd479" strokeWidth={1} strokeDasharray="3 3" />
+      <text x={xOf(1)} y={padT - 5} fontSize={9} fill="#ffd479" textAnchor="middle">RSCU=1</text>
+      {/* x 轴刻度 */}
+      {[0, 0.5, 1, 1.5, 2, 3, 4].filter((v) => v <= maxR).map((v) => (
+        <g key={v}>
+          <line x1={xOf(v)} y1={padT + top.length * rowH + 1} x2={xOf(v)} y2={padT + top.length * rowH + 4} stroke="#5a6170" strokeWidth={0.8} />
+          <text x={xOf(v)} y={padT + top.length * rowH + 14} fontSize={8.5} fill="#8a93a6" textAnchor="middle">{v}</text>
         </g>
-      </svg>
-    </div>
+      ))}
+      {top.map(([codon], i) => {
+        const rscu = usage.rscu[codon] || 0
+        const y = padT + i * rowH
+        const prefer = rscu >= 1
+        const bw = Math.max(1, xOf(rscu) - labelW)
+        return (
+          <g key={codon}>
+            <text x={labelW - 6} y={y + rowH / 2 + 2.5} fontSize={9} fill="var(--text-dim, #aeb6c4)"
+              textAnchor="end" fontFamily="var(--mono, monospace)">{codon}</text>
+            <rect x={labelW} y={y + 2} width={bw} height={rowH - 4} rx={1.5}
+              fill={prefer ? '#4caf82' : '#5b9bd5'} opacity={0.85} />
+            <text x={labelW + bw + 5} y={y + rowH / 2 + 2.5} fontSize={8.5} fill="#8a93a6"
+              fontFamily="var(--mono, monospace)">{rscu.toFixed(2)}</text>
+          </g>
+        )
+      })}
+      {/* 图例 */}
+      <g transform={`translate(${labelW}, ${H - 6})`}>
+        <rect x={0} y={-7} width={9} height={9} rx={1.5} fill="#4caf82" opacity={0.85} />
+        <text x={13} y={0.5} fontSize={8.5} fill="#8a93a6">RSCU ≥ 1 (preferred)</text>
+        <rect x={120} y={-7} width={9} height={9} rx={1.5} fill="#5b9bd5" opacity={0.85} />
+        <text x={133} y={0.5} fontSize={8.5} fill="#8a93a6">RSCU &lt; 1 (avoided)</text>
+      </g>
+    </svg>
   )
 }
 
@@ -790,54 +787,85 @@ function DnDsChart({ result, t }: {
 }
 
 // ---------------------------------------------------------------------------
-// Composition 左表右图：堆叠水平条（每条序列一行，行高与右侧表行一致）
+// Composition 左图右表：堆叠水平条（每条序列一行 + Mean 行，与右侧表行逐一对齐）
+// v0.1.1：行高/表头高均 21px，与 .compo-table 严格一致。
 // ---------------------------------------------------------------------------
 
-function CompoStack({ compo }: { compo: ReturnType<typeof composition> }) {
-  // 行高与 dist-mini 表格一致（padding 2+2 + 文字行高 ≈ 21px），保证左图行与右表行对齐
-  const rowH = 21
+function CompoStack({ compo, t }: {
+  compo: ReturnType<typeof composition>
+  t: (k: string, v?: any) => string
+}) {
+  const rowH = 21   // 与 .compo-table 行高严格一致
   const labelW = 70
   const valW = 38
   const barH = 12
-  const padT = 28 // 表头列名高度
+  const padT = 21   // 对齐表格 thead 行高
   const W = 320
-  const H = padT + compo.length * rowH + 4
+  const hasMean = compo.length > 1
+  const nRows = compo.length + (hasMean ? 1 : 0)
+  const H = padT + nRows * rowH + 6
   const plotW = W - labelW - valW - 8
+
+  // Mean 行（与右表 Mean 行同口径）
+  const meanFreq: Record<string, number> = {}
+  let meanGc = 0
+  if (hasMean) {
+    const n = compo.length
+    for (const b of ['A', 'G', 'C', 'T'] as const) {
+      meanFreq[b] = compo.reduce((s, c) => s + c.freq[b], 0) / n
+    }
+    meanGc = compo.reduce((s, c) => s + c.gc, 0) / n
+  }
+
+  const renderRow = (key: string, label: string, freq: Record<string, number>, gc: number, isMean: boolean) => {
+    const y = padT + rowIdx * rowH
+    const ny = y + (rowH - barH) / 2
+    let x = labelW
+    const segs = (['A', 'G', 'C', 'T'] as const).map((b) => {
+      const w = freq[b] * plotW
+      const seg = <rect key={b} x={x} y={ny} width={w} height={barH}
+        fill={BASE_COLOR[b]} opacity={0.92} />
+      x += w
+      return seg
+    })
+    return (
+      <g key={key}>
+        <text x={labelW - 4} y={y + rowH / 2 + 3} fontSize={9}
+          fill={isMean ? 'var(--text, #14243B)' : 'var(--text-dim, #aeb6c4)'}
+          fontWeight={isMean ? 600 : 400}
+          textAnchor="end" fontFamily="var(--mono, monospace)">
+          {label.length > 9 ? label.slice(0, 9) + '…' : label}
+        </text>
+        {segs}
+        <rect x={labelW} y={ny} width={plotW} height={barH} fill="none"
+          stroke="color-mix(in srgb, var(--border) 80%, transparent)" strokeWidth={0.4} rx={1.5} />
+        <text x={W - valW + 4} y={y + rowH / 2 + 3} fontSize={9} fill="var(--text-dim, #aeb6c4)"
+          textAnchor="end" fontFamily="var(--mono, monospace)">
+          {(gc * 100).toFixed(0)}%
+        </text>
+      </g>
+    )
+  }
+
+  let rowIdx = 0
+  const rows: JSX.Element[] = []
+  for (const c of compo) {
+    rows.push(renderRow(c.name, c.name, c.freq, c.gc, false))
+    rowIdx++
+  }
+  if (hasMean) {
+    rows.push(renderRow('__mean__', t('analyze.compo.mean'), meanFreq, meanGc, true))
+  }
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W, display: 'block' }} role="img"
       aria-label="Base composition stacked bar chart">
-      {/* 列头 */}
-      <text x={labelW - 4} y={padT - 10} fontSize={9} fill="var(--text-faint, #aeb6c4)" textAnchor="end">
+      {/* 列头（画在表头高度区内） */}
+      <text x={labelW - 4} y={padT - 6} fontSize={9} fill="var(--text-faint, #aeb6c4)" textAnchor="end">
         {(['A', 'G', 'C', 'T'] as const).join(' ')}
       </text>
-      <text x={W - valW + 4} y={padT - 10} fontSize={9} fill="var(--text-faint, #aeb6c4)" textAnchor="end">GC%</text>
-      {compo.map((c, i) => {
-        const y = padT + i * rowH
-        const ny = y + (rowH - barH) / 2
-        let x = labelW
-        return (
-          <g key={c.name}>
-            <text x={labelW - 4} y={y + rowH / 2 + 3} fontSize={9} fill="var(--text-dim, #aeb6c4)"
-              textAnchor="end" fontFamily="var(--mono, monospace)">
-              {c.name.length > 9 ? c.name.slice(0, 9) + '…' : c.name}
-            </text>
-            {(['A', 'G', 'C', 'T'] as const).map((b) => {
-              const w = (c.freq[b] * plotW)
-              const seg = <rect key={b} x={x} y={ny} width={w} height={barH}
-                fill={BASE_COLOR[b]} opacity={0.92} />
-              x += w
-              return seg
-            })}
-            {/* 整体描边，让堆叠条有边界感 */}
-            <rect x={labelW} y={ny} width={plotW} height={barH} fill="none"
-              stroke="color-mix(in srgb, var(--border) 80%, transparent)" strokeWidth={0.4} rx={1.5} />
-            <text x={W - valW + 4} y={y + rowH / 2 + 3} fontSize={9} fill="var(--text-dim, #aeb6c4)"
-              textAnchor="end" fontFamily="var(--mono, monospace)">
-              {(c.gc * 100).toFixed(0)}%
-            </text>
-          </g>
-        )
-      })}
+      <text x={W - valW + 4} y={padT - 6} fontSize={9} fill="var(--text-faint, #aeb6c4)" textAnchor="end">GC%</text>
+      {rows}
     </svg>
   )
 }

@@ -228,10 +228,11 @@ export default function SequenceEditor() {
       )}
 
       <div className="seq-grid-scroll">
-        {/* 列头行：# | Name | 位点标尺 | Len | GC% —— 信息列与碱基列分离 */}
+        {/* 列头行：# | Name | Len | 位点标尺（v0.1.1：Len 移至 Name 右侧，去除 GC% 列） */}
         <div className="seq-grid-row ruler">
           <div className="seq-idx-cell">#</div>
           <div className="seq-info-cell">{t('seqEditor.colName')}</div>
+          <div className="seq-len-cell">{t('seqEditor.colLen')}</div>
           <div className="seq-bases-row">
             {Array.from({ length: maxLen }).map((_, p) => (
               <span key={p} className="ruler-cell">
@@ -239,11 +240,9 @@ export default function SequenceEditor() {
               </span>
             ))}
           </div>
-          <div className="seq-len-cell">{t('seqEditor.colLen')}</div>
-          <div className="seq-gc-cell">{t('seqEditor.colGc')}</div>
         </div>
 
-        {/* 每条序列一行：行号 | 名称 | 碱基 | 长度 | GC%（五行等高，desc 见悬停提示） */}
+        {/* 每条序列一行：行号 | 名称 | 长度 | 碱基（desc/GC 见悬停提示） */}
         {sequences.map((s, i) => {
           const st = seqStats(s)
           return (
@@ -263,6 +262,10 @@ export default function SequenceEditor() {
                     🗑
                   </button>
                 </div>
+              </div>
+
+              <div className="seq-len-cell" title={`${s.name}: ${st.length} bp · GC ${(st.gcContent * 100).toFixed(1)}%`}>
+                {st.length}
               </div>
 
               <div className="seq-bases-row" onMouseMove={onRowMouseMove(i)} onMouseUp={onRowMouseUp(i)}>
@@ -298,13 +301,6 @@ export default function SequenceEditor() {
                     </span>
                   )
                 })}
-              </div>
-
-              <div className="seq-len-cell" title={`${s.name}: ${st.length} bp`}>
-                {st.length}
-              </div>
-              <div className="seq-gc-cell" title={`GC ${(st.gcContent * 100).toFixed(1)}%`}>
-                {(st.gcContent * 100).toFixed(0)}%
               </div>
             </div>
           )

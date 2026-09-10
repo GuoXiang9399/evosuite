@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { SeqRecord } from './lib/fasta'
 import { TreeNode } from './lib/newick'
 import { SubstModel, detectSeqType } from './lib/distance'
-import { SkylineResult, PhylodynamicsResult } from './lib/beast'
+import { SkylineResult, PhylodynamicsResult, Beast1Params } from './lib/beast'
 import { getT, Lang } from './i18n'
 
 const STORE_LANG = 'evosuite.lang'
@@ -138,6 +138,10 @@ interface EvoState {
   setSkylineParams: (p: { model: 'constant' | 'exponential' | 'skyline'; groups: number; chain: number }) => void
   skyline: SkylineResult | null
   setSkyline: (s: SkylineResult | null) => void
+
+  // BEAST1/2 BEAUti 分类参数（v0.1.1：树先验 / 位点模型 / 分子钟 / MCMC）
+  beast1Params: Beast1Params
+  setBeast1Params: (p: Partial<Beast1Params>) => void
 
   // 系统动态（phylodynamics）分析结果与参数
   phyloParams: { model: 'constant' | 'exponential' | 'skyline'; groups: number; genTime: number }
@@ -276,6 +280,18 @@ export const useStore = create<EvoState>((set) => ({
   setSkylineParams: (p) => set({ skylineParams: p }),
   skyline: null,
   setSkyline: (s) => set({ skyline: s }),
+
+  // BEAST1/2 BEAUti 分类参数：默认对应 BEAUti 的常用预设
+  beast1Params: {
+    treePrior: 'skyline',
+    clock: 'strict',
+    subst: 'hky',
+    gammaCats: 0,
+    pinvEnabled: false,
+    pinv: 0.1,
+    chain: 10000000,
+  },
+  setBeast1Params: (patch) => set((s) => ({ beast1Params: { ...s.beast1Params, ...patch } })),
 
   // 系统动态（phylodynamics）
   phyloParams: { model: 'skyline', groups: 5, genTime: 1 },

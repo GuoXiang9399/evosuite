@@ -1,6 +1,6 @@
 [package]
 name = "evosuite"
-version = "0.1.0"
+version = "0.1.1"
 description = "EvoSuite - 进化与流病分析一体化平台"
 authors = ["EvoSuite Team"]
 edition = "2021"
@@ -17,6 +17,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# v0.1.1：引擎一键下载安装（blocking HTTP + rustls，无系统 OpenSSL 依赖）
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+zip = "0.6"
 
 [profile.release]
 opt-level = "s"

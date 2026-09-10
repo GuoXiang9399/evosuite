@@ -6,6 +6,7 @@ import {
   detectEngines,
   openDownloadPage,
   downloadEngine,
+  installEngine,
   setEnginePath,
   openWorkspaceDialog,
 } from '../lib/tauri'
@@ -26,6 +27,8 @@ export default function Engines({ onClose }: { onClose: () => void }) {
   const setTheme = useStore((s) => s.setTheme)
   const [status, setStatus] = useState<Record<string, EngineStatus> | null>(null)
   const [scanning, setScanning] = useState(false)
+  // 每引擎安装状态：null = 空闲；true = 正在下载/解压
+  const [installing, setInstalling] = useState<Record<string, boolean>>({})
 
   const refresh = async () => {
     setScanning(true)
@@ -44,11 +47,33 @@ export default function Engines({ onClose }: { onClose: () => void }) {
     if (picked) setWorkspace(picked)
   }
 
-  const onDownload = async (id: string) => {
+  // 一键安装：下载官方包 → 解压到「软件文件夹/engines/<id>」→ 特征验证。
+  // 平台不支持（如 Windows MAFFT 限速 / RAxML-NG 无 Windows 包）时回退到打开下载页。
+  const onInstall = async (id: string) => {
     const def = ENGINE_DEFS.find((e) => e.id === id)!
-    const url = await downloadEngine(def)
-    if (url) openDownloadPage(url)
-    pushLog(`${def.name}: opened download page`, 'info')
+    setInstalling((s) => ({ ...s, [id]: true }))
+    pushLog(`${def.name}: ${t('eng.installStart')}`, 'info')
+    try {
+      const res = await installEngine(id)
+      if (res) {
+        pushLog(`${def.name}: ${t('eng.installDone', { v: res.version || def.version })} → ${res.path}`, 'ok')
+        if (res.warning) pushLog(`${def.name}: ${res.warning}`, 'warn')
+        await refresh()
+      } else {
+        // 非 Tauri 环境（浏览器预览）：打开下载页
+        const url = await downloadEngine(def)
+        if (url) openDownloadPage(url)
+        pushLog(`${def.name}: ${t('eng.openPage')}`, 'info')
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      pushLog(`${def.name}: ${t('eng.installFail')} — ${msg}`, 'warn')
+      // 一键安装不可用（无官方包/网络失败）：回退到官方下载页
+      const url = def.url
+      openDownloadPage(url)
+    } finally {
+      setInstalling((s) => ({ ...s, [id]: false }))
+    }
   }
 
   const onSetPath = async (id: string) => {
@@ -138,8 +163,13 @@ export default function Engines({ onClose }: { onClose: () => void }) {
                   )}
                 </div>
                 <div className="eng-actions">
-                  <button className="btn" onClick={() => onDownload(e.id)}>
-                    ⬇ {t('eng.download')}
+                  <button
+                    className="btn"
+                    onClick={() => onInstall(e.id)}
+                    disabled={!!installing[e.id] || scanning}
+                    title={t('eng.installHint')}
+                  >
+                    {installing[e.id] ? `⏳ ${t('eng.installing')}` : installed ? `⬇ ${t('eng.reinstall')}` : `⬇ ${t('eng.install')}`}
                   </button>
                   <button className="btn" onClick={() => onSetPath(e.id)}>
                     📁 {t('eng.setpath')}

@@ -1,8 +1,16 @@
+import { useEffect, useState } from 'react'
 import { useStore, useT } from '../store'
 import { leafCount, internalNodes } from '../lib/newick'
-import { downloadText } from '../lib/tauri'
+import { downloadText, listWorkspaceFiles, readWorkspaceFile, saveWorkspaceFile, WorkspaceFile } from '../lib/tauri'
 import { toFasta } from '../lib/fasta'
 import LogPanel from './LogPanel'
+
+// 结果文件大小人性化显示
+function fmtSize(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(2)} MB`
+}
 
 export default function Report() {
   const workspace = useStore((s) => s.workspace)
@@ -16,15 +24,43 @@ export default function Report() {
   const skyline = useStore((s) => s.skyline)
   const phylodynamics = useStore((s) => s.phylodynamics)
   const t = useT()
+  const [files, setFiles] = useState<WorkspaceFile[]>([])
+  const [loadingFiles, setLoadingFiles] = useState(false)
 
   const hasTree = !!tree
   const projectLabel = workspace ? `${workspace}` : t('report.fallback')
   const fileBase = workspace ? workspace.replace(/[\\/:]/g, '_').split(/[\\/]/).pop()! : 'evosuite'
   const markdown = buildMarkdown()
 
-  const exportMd = () => {
+  // 拉取工作文件夹结果文件列表（挂载 / 切换工作区 / 手动刷新时）
+  const refreshFiles = async () => {
+    setLoadingFiles(true)
+    const list = await listWorkspaceFiles(workspace || undefined)
+    setFiles(list.slice().reverse()) // 最新在前
+    setLoadingFiles(false)
+  }
+  useEffect(() => {
+    refreshFiles()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace])
+
+  // 点击结果文件：读取内容并导出下载（桌面端即工作区原件的副本）
+  const onOpenFile = async (name: string) => {
+    const text = await readWorkspaceFile(name, workspace || undefined)
+    if (text != null) {
+      downloadText(name, text)
+      pushLog(t('log.exportFile', { name }), 'ok')
+    } else {
+      pushLog(t('log.exportFileFail', { name }), 'warn')
+    }
+  }
+
+  const exportMd = async () => {
     downloadText(`${fileBase}_report.md`, markdown)
+    const p = await saveWorkspaceFile('report.md', markdown, workspace)
+    if (p) pushLog(t('log.saveFile', { name: 'report.md' }), 'ok')
     pushLog(t('log.exportMd'), 'ok')
+    refreshFiles()
   }
   const exportHtml = () => {
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${projectLabel}</title>
@@ -36,9 +72,12 @@ td,th{border:1px solid #ddd;padding:6px 10px;text-align:left}</style></head>
     downloadText(`${fileBase}_report.html`, html)
     pushLog(t('log.exportHtml'), 'ok')
   }
-  const exportFasta = () => {
+  const exportFasta = async () => {
     downloadText(`${fileBase}.fasta`, toFasta(sequences))
+    const p = await saveWorkspaceFile('sequences.fasta', toFasta(sequences), workspace)
+    if (p) pushLog(t('log.saveFile', { name: 'sequences.fasta' }), 'ok')
     pushLog(t('log.exportAlignFasta'), 'ok')
+    refreshFiles()
   }
 
   function buildMarkdown(): string {
@@ -95,12 +134,51 @@ td,th{border:1px solid #ddd;padding:6px 10px;text-align:left}</style></head>
     return lines.join('\n')
   }
 
+  // 结果文件列表区（上）：工作文件夹中的生成文件（树 / 表 / 报告）
+  const filesPanel = (
+    <div className="ws-files">
+      <div className="ws-files-head">
+        <h3>📁 {t('report.filesTitle')}</h3>
+        <button className="btn tiny" onClick={refreshFiles} disabled={loadingFiles}>
+          {loadingFiles ? '…' : `⟳ ${t('report.refresh')}`}
+        </button>
+      </div>
+      <p className="cfg-note" title={workspace}>{t('report.filesSub')}{workspace ? ` — ${workspace.length > 60 ? '…' + workspace.slice(-58) : workspace}` : ''}</p>
+      {files.length === 0 ? (
+        <div className="ws-files-empty">{t('report.noFiles')}</div>
+      ) : (
+        <table className="dist-mini ws-files-table">
+          <thead>
+            <tr>
+              <th>{t('report.thFile')}</th>
+              <th>{t('report.thSize')}</th>
+              <th>{t('report.thModified')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {files.map((f) => (
+              <tr key={f.name} onClick={() => onOpenFile(f.name)} title={t('report.openFile')}>
+                <td className="ws-file-name">{fileIcon(f.name)} {f.name}</td>
+                <td>{fmtSize(f.size)}</td>
+                <td>{f.modified}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+
   if (!sequences.length) {
     return (
       <div className="view">
         <div className="view-head"><h2>{t('report.title')}</h2></div>
         <div className="empty">{t('report.empty')}</div>
-        <LogPanel />
+        {filesPanel}
+        <div className="report-split">
+          <LogPanel />
+          <div className="report-preview"><pre>{t('report.empty')}</pre></div>
+        </div>
       </div>
     )
   }
@@ -115,12 +193,28 @@ td,th{border:1px solid #ddd;padding:6px 10px;text-align:left}</style></head>
           <button className="btn primary" onClick={exportHtml}>{t('report.html')}</button>
         </div>
       </div>
-      <div className="report-preview">
-        <pre>{markdown}</pre>
+
+      {/* 上：工作文件夹结果文件 */}
+      {filesPanel}
+
+      {/* 左：RUN Log ｜ 右：Report 预览 */}
+      <div className="report-split">
+        <LogPanel />
+        <div className="report-preview">
+          <pre>{markdown}</pre>
+        </div>
       </div>
-      <LogPanel />
     </div>
   )
+}
+
+// 按扩展名给出文件图标
+function fileIcon(name: string): string {
+  if (/\.nwk$/i.test(name)) return '🌳'
+  if (/\.tsv$/i.test(name)) return '📊'
+  if (/\.md$/i.test(name)) return '📄'
+  if (/\.fasta$/i.test(name) || /\.fa$/i.test(name)) return '🧬'
+  return '📄'
 }
 
 function mdToHtml(md: string): string {
